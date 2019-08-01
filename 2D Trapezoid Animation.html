@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>2D WebGL Animation</title>
+    <script src="AffineTransform2D.js"></script>
+ 
+    <script>
+        "use strict";
+ 
+        var vertexShaderSource =
+            "attribute vec2 a_coords;\n" +
+            "uniform mat3 u_transform;\n" +
+            "attribute vec3 a_color;\n" +
+            "varying vec3 v_color;\n" +
+            "void main() {\n" +
+            "   vec3 transformedCoords = u_transform * vec3(a_coords,1.0);\n" +
+            "   gl_Position = vec4(transformedCoords.xy, 0.0, 1.0);\n" +
+            "   v_color = a_color;\n" +
+            "}\n";
+ 
+        var fragmentShaderSource =
+            "precision mediump float;\n" +
+            "uniform vec3 u_color;\n" +
+            "varying vec3 v_color;\n" +
+            "void main() {\n" +
+            "   gl_FragColor = vec4(v_color, 1.0);\n" +
+            "}\n";
+ 
+        var gl;  // The WebGL graphics context.
+ 
+        var attributeCoords;  // Location of the attribute named "a_coords".
+        var bufferCoords;     // A vertex buffer object to hold the values for coords.
+ 
+        var attributeColor;   // Location of the attribute named "a_color".
+        var bufferColor;     // A vertex buffer object to hold the values for color.
+ 
+        var a_coords_loc;    // Location for "a_coords" attribute.
+        var u_transform_loc; // Location for "u_transform" uniform.
+        var u_color_loc;     // Location for "u_color" uniform.
+ 
+        var trapizoidCoordsVBO; // Buffers holding coordinates for basic objects.
+ 
+        var animating = false;  // Set to true when the animation is running.
+        var framenumber = 0;    // Current frame number in the animation.
+ 
+        /*----------------------- Current transform and transform stack --------------*/
+ 
+        var transform = new AffineTransform2D();  // Current AffineTransform2D, initially the identity.
+        var transformStack = [];  // An array to serve as the transform stack.
+ 
+        /**
+         *  Push a copy of the current transform onto the transform stack.
+         */
+        function pushTransform() {
+            transformStack.push(new AffineTransform2D(transform));
+        }
+ 
+        /**
+         *  Remove the top item from the transform stack, and set it to be the current
+         *  transform.  If the stack is empty, nothing is done (and no error is generated).
+         */
+        function popTransform() {
+            if (transformStack.length > 0) {
+                transform = transformStack.pop();
+            }
+        }
+ 
+        /*------------------------ routines for drawing hierarchical objects ----------*/
+        /* (note that calling one of these can change the current color and transform) */
+ 
+        // draw trapizoid
+        /**
+         *  Draws the outline of a trapizoid of size 1 centered at the origin.
+         *  Uses the current color and line width.
+         */
+        function trapizoid() {
+ 
+            /* Set up values for the "coords" attribute */
+            var coords = new Float32Array([-1, -1, 1, -1, 0, 1]);
+ 
+            gl.bindBuffer(gl.ARRAY_BUFFER, bufferCoords);
+            gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STREAM_DRAW);
+            gl.vertexAttribPointer(attributeCoords, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(attributeCoords);
+ 
+            /* Set up values for the "color" attribute */
+            var color = new Float32Array([0.9, 0.2, 0.2, 0, 0, 0, 0.9, 0.9, 0.2]);
+ 
+            gl.bindBuffer(gl.ARRAY_BUFFER, bufferColor);
+            gl.bufferData(gl.ARRAY_BUFFER, color, gl.STREAM_DRAW);
+            gl.vertexAttribPointer(attributeColor, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(attributeColor);
+ 
+            gl.uniformMatrix3fv(u_transform_loc, false, transform.getMat3());
+            gl.bindBuffer(gl.ARRAY_BUFFER, trapizoidCoordsVBO);
+            gl.vertexAttribPointer(a_coords_loc, 2, gl.FLOAT, false, 0, 0);
+ 
+            /* Draw the trapizoid. */
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+        }
+ 
+        function nestedTriangles() {
+            gl.uniform3f(u_color_loc, 0, 0, 1);
+            for (var i = 1; i < 200; i++) {
+               gl.uniform3f(u_color_loc, i / 200, 0, 1 - i / 200);
+               transform.scale(0.98);
+               transform.rotate(framenumber / 500);
+               trapizoid();
+           }
+       }
+ 
+       /**
+        *  Draws the content of the canvas, in this case, the RGB color trapizoid.
+        */
+       function draw() {
+           gl.clearColor(0.85, 0.85, 0.85, 1);  // specify the color to be used for clearing
+           gl.clear(gl.COLOR_BUFFER_BIT);  // clear the canvas
+ 
+           pushTransform();
+           nestedTriangles();
+           popTransform();
+       }
+ 
+       /**
+        * Creates a program for use in the WebGL context gl, and returns the
+        * identifier for that program.  If an error occurs while compiling or
+        * linking the program, an exception of type String is thrown.  The error
+        * string contains the compilation or linking error.  If no error occurs,
+        * the program identifier is the return value of the function.
+        */
+       function createProgram(gl, vertexShaderSource, fragmentShaderSource) {
+           var vsh = gl.createShader(gl.VERTEX_SHADER);
+           gl.shaderSource(vsh, vertexShaderSource);
+           gl.compileShader(vsh);
+           if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS)) {
+               throw "Error in vertex shader:  " + gl.getShaderInfoLog(vsh);
+           }
+           var fsh = gl.createShader(gl.FRAGMENT_SHADER);
+           gl.shaderSource(fsh, fragmentShaderSource);
+           gl.compileShader(fsh);
+           if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS)) {
+               throw "Error in fragment shader:  " + gl.getShaderInfoLog(fsh);
+           }
+           var prog = gl.createProgram();
+           gl.attachShader(prog, vsh);
+           gl.attachShader(prog, fsh);
+           gl.linkProgram(prog);
+           if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+               throw "Link error in program:  " + gl.getProgramInfoLog(prog);
+           }
+           return prog;
+       }
+ 
+       /**
+        * Initialize the WebGL graphics context
+        */
+       function initGL() {
+           var prog = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+           gl.useProgram(prog);
+           attributeCoords = gl.getAttribLocation(prog, "a_coords");
+           bufferCoords = gl.createBuffer();
+           attributeColor = gl.getAttribLocation(prog, "a_color");
+           bufferColor = gl.createBuffer();
+ 
+           gl.enableVertexAttribArray(a_coords_loc);
+           u_color_loc = gl.getUniformLocation(prog, "u_color");
+           u_transform_loc = gl.getUniformLocation(prog, "u_transform");
+           trapizoidCoordsVBO = gl.createBuffer();
+           gl.bindBuffer(gl.ARRAY_BUFFER, trapizoidCoordsVBO);
+ 
+           var trapizoidCoords = new Float32Array([-0.9, 0.9, 0.0,
+               -0.9, -0.9, 0.0,
+               0.9, -0.9, 0.0,]);
+           gl.bufferData(gl.ARRAY_BUFFER, trapizoidCoords, gl.STATIC_DRAW);
+ 
+       }
+ 
+       /*--------------------------- animation support ----------------------------------*/
+ 
+       function doFrame() {
+           if (animating) {
+               framenumber++;
+               draw();
+               requestAnimationFrame(doFrame);
+           }
+       }
+ 
+       function startAnimation() {
+           if (!animating) {
+               animating = true;
+               requestAnimationFrame(doFrame);
+           }
+       }
+ 
+       function pauseAnimation() {
+           animating = false;
+       }
+ 
+       function doAnimationCheckbox() {
+           if (document.getElementById("animationCheckbox").checked)
+               startAnimation();
+           else
+               pauseAnimation();
+       }
+ 
+       /**
+        * Initialize the program.  This function is called after the page has been loaded.
+        */
+       function init() {
+           try {
+               var canvas = document.getElementById("webglcanvas");
+               var options = {  // no need for alpha channel or depth buffer in this program
+                   alpha: false,
+                   depth: false
+               };
+               gl = canvas.getContext("webgl", options) ||
+                   canvas.getContext("experimental-webgl", options);
+               if (!gl) {
+                   throw "Browser does not support WebGL";
+               }
+           } catch (e) {
+               document.getElementById("canvas-holder").innerHTML =
+                   "<p>Sorry, could not get a WebGL graphics context.</p>";
+                return;
+            }
+            try {
+                initGL();  // initialize the WebGL graphics context
+            } catch (e) {
+                document.getElementById("canvas-holder").innerHTML =
+                    "<p>Sorry, could not initialize the WebGL graphics context:" + e + "</p>";
+                return;
+            }
+            document.getElementById("animationCheckbox").checked = false;
+            document.getElementById("animationCheckbox").onchange = doAnimationCheckbox;
+            draw();    // draw the image
+        }
+ 
+    </script>
+</head>
+<body onload="init()" style="background-color: lightGray">
+ 
+Week 7 Discussion: 2D Transformation UMUC Colors<br/>
+ 
+<noscript><p><b>Sorry, but this page requires JavaScript.</b></p></noscript>
+ 
+<label><input type="checkbox" id="animationCheckbox"><b>Animate</b></label>
+ 
+<div id="canvas-holder">
+    <canvas id="webglcanvas" width="600" height="600"></canvas>
+</div>
+ 
+</body>
+ 
+</html>
